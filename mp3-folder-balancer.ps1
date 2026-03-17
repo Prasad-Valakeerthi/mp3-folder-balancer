@@ -1,46 +1,75 @@
-param(
-    [string]$root="."
-)
+# -------- CONFIG --------
+$limit = 255
 
-$limit=255
+# -------- USB DETECTION --------
+function Get-USBDrive {
+    $usbDrives = Get-WmiObject Win32_LogicalDisk | Where-Object {$_.DriveType -eq 2}
+    foreach ($drive in $usbDrives) {
+        return ($drive.DeviceID + "\")
+    }
+    return $null
+}
 
-$folders=Get-ChildItem $root -Directory | Sort-Object {[int]$_.Name}
+$usbRoot = Get-USBDrive
 
-if(($folders | Where-Object {$_.Name -notmatch '^\d+$'}).Count -gt 0){
-    Write-Host "Invalid folder structure. Aborting."
+if (!$usbRoot) {
+    Write-Host "USB not found."
     exit
 }
 
-$changed=$true
+$usbPath = Join-Path $usbRoot "Music"
 
-while($changed){
-    $changed=$false
-    $folders=Get-ChildItem $root -Directory | Sort-Object {[int]$_.Name}
+if (!(Test-Path $usbPath)) {
+    Write-Host "Music folder not found."
+    exit
+}
 
-    for($i=0;$i -lt $folders.Count;$i++){
+Write-Host "Using USB: $usbPath"
 
-        $f=$folders[$i].FullName
+# -------- MAIN LOOP --------
+$continue = $true
+$totalMoved = 0
 
-        $files=Get-ChildItem $f -File |
-        Where-Object {$_.Extension -match '^\.(mp3)$'} |
-        Sort-Object Name
+while ($continue) {
+    $continue = $false
 
-        if($files.Count -gt $limit){
+    $folders = Get-ChildItem $usbPath -Directory | Sort-Object {[int]$_.Name}
 
-            $overflow=$files[$limit..($files.Count-1)]
+    for ($i = 0; $i -lt $folders.Count; $i++) {
 
-            foreach($file in $overflow){
+        $folder = $folders[$i]
+        $currentPath = $folder.FullName
+        $currentNumber = [int]$folder.Name
 
-                $next=[int]$folders[$i].Name+1
-                $nextPath=Join-Path $root $next
+        $files = Get-ChildItem $currentPath -File |
+            Where-Object { $_.Extension -ieq ".mp3" } |
+            Sort-Object Name
 
-                if(!(Test-Path $nextPath)){
+        if ($files.Count -gt 255) {
+
+            $overflow = $files[$limit..($files.Count - 1)]
+
+            foreach ($file in $overflow) {
+
+                $nextNumber = $currentNumber + 1
+                $nextFolderName = "{0:D2}" -f $nextNumber
+                $nextPath = Join-Path $usbPath $nextFolderName
+
+                if (!(Test-Path $nextPath)) {
                     New-Item -ItemType Directory -Path $nextPath | Out-Null
+                    Write-Host "Created folder: $nextFolderName"
                 }
 
+                Write-Host ("Moving: {0} → {1}" -f $file.Name, $nextFolderName)
                 Move-Item $file.FullName $nextPath
-                $changed=$true
+
+                $totalMoved++
+                $continue = $true
             }
         }
     }
 }
+
+Write-Host "-----------------------------------"
+Write-Host "Done."
+Write-Host "Total files moved: $totalMoved"
