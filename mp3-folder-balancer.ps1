@@ -25,20 +25,27 @@ $MasterPlaylistFile = Join-Path $PlaylistFolder "Latest Playlist.m3u"
 
 Write-Host "Using USB: $MusicPath"
 
-# -------- SMART SORT --------
+# -------- GET ALL MP3 FILES --------
 $allFiles = Get-ChildItem $MusicPath -Recurse -File |
     Where-Object { $_.Extension -ieq ".mp3" } |
     Sort-Object Name
 
+if ($allFiles.Count -eq 0) {
+    Write-Host "No MP3 files found."
+    exit
+}
+
 $totalFiles = $allFiles.Count
 $totalMoved = 0
 
+# -------- SMART SORT --------
 for ($i = 0; $i -lt $totalFiles; $i++) {
 
     $file = $allFiles[$i]
 
     $folderIndex = [math]::Floor($i / $limit) + 1
-    $folderName = "{0:D2}" -f $folderIndex
+    $folderName = $folderIndex.ToString("D2")   # ✅ FIXED
+
     $targetFolder = Join-Path $MusicPath $folderName
 
     if (!(Test-Path $targetFolder)) {
@@ -47,9 +54,15 @@ for ($i = 0; $i -lt $totalFiles; $i++) {
     }
 
     if ($file.DirectoryName -ne $targetFolder) {
-        Write-Host ("Moving: {0} -> {1}" -f $file.Name, $folderName)
-        Move-Item $file.FullName $targetFolder -Force
-        $totalMoved++
+
+        if ($folderName -match '^\d{2}$') {
+            Write-Host ("Moving: {0} -> {1}" -f $file.Name, $folderName)
+            Move-Item $file.FullName $targetFolder -Force
+            $totalMoved++
+        }
+        else {
+            Write-Host "Skipping invalid folder name for: $($file.Name)"
+        }
     }
 }
 
@@ -60,15 +73,19 @@ Write-Host "Sorting Done. Total moved: $totalMoved"
 Write-Host "-----------------------------------"
 Write-Host "Folder-wise count:"
 
-$folders = Get-ChildItem $MusicPath -Directory | Sort-Object {[int]$_.Name}
+$folders = Get-ChildItem $MusicPath -Directory |
+    Where-Object { $_.Name -match '^\d+$' } |
+    Sort-Object {[int]$_.Name}
 
 foreach ($folder in $folders) {
+
     $count = (Get-ChildItem $folder.FullName -File |
         Where-Object { $_.Extension -ieq ".mp3" }).Count
 
     if ($count -eq 255) {
         Write-Host ("{0} = {1}/255 (FULL)" -f $folder.Name, $count)
-    } else {
+    }
+    else {
         Write-Host ("{0} = {1}/255" -f $folder.Name, $count)
     }
 }
@@ -96,19 +113,22 @@ $SongData = foreach ($File in $MusicFiles) {
 
     $Year = $null
 
+    # Try year from filename
     if ($File.Name -match '\b(19|20)\d{2}\b') {
         $Year = [int]$Matches[0]
     }
 
+    # Try metadata
     if (-not $Year) {
         try {
             $ShellFolder = $Shell.NameSpace($File.DirectoryName)
             $ShellFile = $ShellFolder.ParseName($File.Name)
 
             if ($ShellFile) {
-                $Year28 = $ShellFolder.GetDetailsOf($ShellFile, 28)
-                if ($Year28 -match '\d{4}') {
-                    $Year = [int]([regex]::Match($Year28, '\d{4}').Value)
+                $YearMeta = $ShellFolder.GetDetailsOf($ShellFile, 28)
+
+                if ($YearMeta -match '\d{4}') {
+                    $Year = [int]([regex]::Match($YearMeta, '\d{4}').Value)
                 }
             }
         } catch {}
@@ -123,16 +143,22 @@ $SongData = foreach ($File in $MusicFiles) {
     }
 }
 
+# Sort playlist
 $SortedSongs = $SongData |
     Sort-Object @{Expression='Year'; Descending=$true},
                 @{Expression='FileName'; Descending=$false}
 
+# Create playlist
 "#EXTM3U" | Out-File $MasterPlaylistFile -Encoding UTF8
 "# Latest Playlist - Sorted by Year then A-Z" |
     Out-File $MasterPlaylistFile -Append -Encoding UTF8
 
 foreach ($Song in $SortedSongs) {
-    $Song.FullName | Out-File $MasterPlaylistFile -Append -Encoding UTF8
+
+    # ✅ RELATIVE PATH (IMPORTANT FIX)
+    $relativePath = $Song.FullName.Replace($MusicRoot, "")
+
+    $relativePath | Out-File $MasterPlaylistFile -Append -Encoding UTF8
 }
 
 Write-Host "-----------------------------------"
