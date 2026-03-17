@@ -44,7 +44,13 @@ for ($i = 0; $i -lt $totalFiles; $i++) {
     $file = $allFiles[$i]
 
     $folderIndex = [math]::Floor($i / $limit) + 1
-    $folderName = $folderIndex.ToString("D2")   # ✅ FIXED
+
+    # ✅ SAFE folder naming (no format bug)
+    if ($folderIndex -lt 10) {
+        $folderName = "0" + $folderIndex
+    } else {
+        $folderName = [string]$folderIndex
+    }
 
     $targetFolder = Join-Path $MusicPath $folderName
 
@@ -54,15 +60,9 @@ for ($i = 0; $i -lt $totalFiles; $i++) {
     }
 
     if ($file.DirectoryName -ne $targetFolder) {
-
-        if ($folderName -match '^\d{2}$') {
-            Write-Host ("Moving: {0} -> {1}" -f $file.Name, $folderName)
-            Move-Item $file.FullName $targetFolder -Force
-            $totalMoved++
-        }
-        else {
-            Write-Host "Skipping invalid folder name for: $($file.Name)"
-        }
+        Write-Host ("Moving: {0} -> {1}" -f $file.Name, $folderName)
+        Move-Item $file.FullName $targetFolder -Force
+        $totalMoved++
     }
 }
 
@@ -84,8 +84,7 @@ foreach ($folder in $folders) {
 
     if ($count -eq 255) {
         Write-Host ("{0} = {1}/255 (FULL)" -f $folder.Name, $count)
-    }
-    else {
+    } else {
         Write-Host ("{0} = {1}/255" -f $folder.Name, $count)
     }
 }
@@ -113,12 +112,10 @@ $SongData = foreach ($File in $MusicFiles) {
 
     $Year = $null
 
-    # Try year from filename
     if ($File.Name -match '\b(19|20)\d{2}\b') {
         $Year = [int]$Matches[0]
     }
 
-    # Try metadata
     if (-not $Year) {
         try {
             $ShellFolder = $Shell.NameSpace($File.DirectoryName)
@@ -126,7 +123,6 @@ $SongData = foreach ($File in $MusicFiles) {
 
             if ($ShellFile) {
                 $YearMeta = $ShellFolder.GetDetailsOf($ShellFile, 28)
-
                 if ($YearMeta -match '\d{4}') {
                     $Year = [int]([regex]::Match($YearMeta, '\d{4}').Value)
                 }
@@ -143,21 +139,17 @@ $SongData = foreach ($File in $MusicFiles) {
     }
 }
 
-# Sort playlist
 $SortedSongs = $SongData |
     Sort-Object @{Expression='Year'; Descending=$true},
                 @{Expression='FileName'; Descending=$false}
 
-# Create playlist
 "#EXTM3U" | Out-File $MasterPlaylistFile -Encoding UTF8
 "# Latest Playlist - Sorted by Year then A-Z" |
     Out-File $MasterPlaylistFile -Append -Encoding UTF8
 
 foreach ($Song in $SortedSongs) {
-
-    # ✅ RELATIVE PATH (IMPORTANT FIX)
+    # ✅ RELATIVE PATH
     $relativePath = $Song.FullName.Replace($MusicRoot, "")
-
     $relativePath | Out-File $MasterPlaylistFile -Append -Encoding UTF8
 }
 
